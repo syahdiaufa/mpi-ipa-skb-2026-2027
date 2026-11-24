@@ -2341,6 +2341,32 @@
       timerInterval: null
     };
 
+    async function fetchRemoteUASSettings(silent = true) {
+      const url = localStorage.getItem('libaru_gas_url') || DEFAULT_GAS_URL;
+      if (!url) return false;
+      try {
+        const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'action=getAllData&_t=' + Date.now());
+        const json = await res.json();
+        if (json && json.status === 'success' && json.settings) {
+          const remoteOpen = String(json.settings.akses_uas || '').toUpperCase() === 'OPEN';
+          const remoteDur = Number(json.settings.durasi_menit) || 45;
+          const changed = (UASControlState.isOpen !== remoteOpen) || (UASControlState.durationMinutes !== remoteDur);
+          UASControlState.isOpen = remoteOpen;
+          UASControlState.durationMinutes = remoteDur;
+          localStorage.setItem('libaru_uas_open', UASControlState.isOpen ? 'true' : 'false');
+          localStorage.setItem('libaru_uas_duration', String(UASControlState.durationMinutes));
+          updateUASGateBadges();
+          if (changed && typeof renderTopicCatalog === 'function') {
+            renderTopicCatalog();
+          }
+          return true;
+        }
+      } catch (e) {
+        if (!silent) console.warn('Gagal memeriksa status UAS dari server:', e);
+      }
+      return false;
+    }
+
     function updateUASGateBadges() {
       const pill = document.getElementById('uas-gate-status-pill');
       if (pill) {
@@ -2512,8 +2538,17 @@
     /* ========================================================
        ALUR MASUK MENU UAS (CEK STATUS BUKA/TUTUP -> LOGIN TKA -> EXAM TKA)
        ======================================================== */
-    function openUASPrep(grade, sem) {
+    async function openUASPrep(grade, sem) {
       SoundEngine.playClick();
+      Swal.fire({
+        title: 'Memeriksa Akses UAS...',
+        text: 'Menyinkronkan status akses dengan server Guru...',
+        allowOutsideClick: false,
+        didOpen: () => { Swal.showLoading(); }
+      });
+      await fetchRemoteUASSettings(true);
+      Swal.close();
+
       if (!UASControlState.isOpen) {
         Swal.fire({
           icon: 'warning',
@@ -2565,7 +2600,8 @@
       namaSel.innerHTML = list.map(n => `<option value="${n}">${n}</option>`).join('');
     }
 
-    function startTKAExamSession() {
+    async function startTKAExamSession() {
+      await fetchRemoteUASSettings(true);
       if (!UASControlState.isOpen) {
         Swal.fire('Akses Ditutup', 'Akses UAS telah ditutup oleh guru.', 'error');
         navGoHome();
@@ -4646,6 +4682,7 @@
       document.getElementById(`btn-grade-${grade}`).classList.add('active');
       renderTopicCatalog();
     updateUASGateBadges();
+    fetchRemoteUASSettings(true);
     syncStudentsFromSheet();
     }
 
@@ -6075,10 +6112,21 @@ function launchQuizMode(mode) {
       }
 
       ensureEvalStudentSlots(AppState.userCount);
+      updateUASGateBadges();
       renderTopicCatalog();
       renderStudentInputs();
       openTopic('pengukuran-7-1');
       navGoHome();
+
+      // Sinkronisasi otomatis status akses UAS & data siswa dari Spreadsheet saat halaman dibuka
+      fetchRemoteUASSettings(true);
+      syncStudentsFromSheet();
+      setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          fetchRemoteUASSettings(true);
+        }
+      }, 10000);
+      window.addEventListener('focus', () => fetchRemoteUASSettings(true));
     });
   </script>
 <style>
